@@ -15,5 +15,10 @@ async def test_agent_card_advertises_the_public_endpoints(client: AsyncClient) -
     assert [skill["id"] for skill in card["skills"]] == ["almena-assistant", "almena-registry"]
     scheme = card["securitySchemes"]["almenaRegistry"]["httpAuthSecurityScheme"]
     assert scheme["scheme"] == "Bearer"
-    # The token is optional: nothing requires it.
-    assert "securityRequirements" not in card
+    # The token is required on every call.
+    assert card["securityRequirements"] == [{"schemes": {"almenaRegistry": {}}}]
+
+
+async def test_the_card_needs_no_token(anonymous: AsyncClient) -> None:
+    response = await anonymous.get("/.well-known/agent-card.json")
+    assert response.status_code == 200

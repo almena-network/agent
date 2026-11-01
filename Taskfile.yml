@@ -35,7 +35,7 @@ tasks:
     env:
       AGENT_LOG_LEVEL: '{{.AGENT_LOG_LEVEL | default "DEBUG"}}'
     cmds:
-      - uv run fastapi dev src/almena_agent/main.py --port {{.PORT}}
+      - uv run uvicorn almena_agent.main:app --reload --port {{.PORT}}
 
   test:
     desc: Run the test suite (Claude is faked; nothing is billed)
@@ -113,13 +113,14 @@ tasks:
     silent: true
 
   ask:
-    desc: 'Send the running agent a message over A2A JSON-RPC (task ask -- "What is Almena?")'
+    desc: 'Send the running agent a message over A2A JSON-RPC with $ALMENA_TOKEN (task ask -- "What is Almena?")'
     requires:
-      vars: [CLI_ARGS]
+      vars: [CLI_ARGS, ALMENA_TOKEN]
     cmds:
       - >-
         curl --fail --silent --show-error http://localhost:{{.PORT}}/a2a/jsonrpc
         -H 'Content-Type: application/json' -H 'A2A-Version: 1.0'
+        -H "Authorization: Bearer $ALMENA_TOKEN"
         -d "$(jq -n --arg text '{{.CLI_ARGS}}' --arg id "$(uuidgen)"
         '{jsonrpc:"2.0",id:1,method:"SendMessage",params:{message:{messageId:$id,role:"ROLE_USER",parts:[{text:$text}]}}}')"
         | jq .

@@ -4,14 +4,15 @@ A message opens (or continues) a task; Claude's text streams into the task as
 one artifact, and the task ends completed, rejected when Claude declines or
 the conversation is full, or failed when Claude cannot be reached. A2A
 contexts are conversations: messages sharing a ``contextId`` see the turns
-before them.
+before them. The caller is the registry account ``auth.A2AAuth`` let in; a
+call without one never gets here, and is rejected if it does.
 """
 
 import asyncio
-import hashlib
 import logging
 import uuid
-from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from a2a.helpers import new_task_from_user_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -36,8 +37,9 @@ class ClaudeAgentExecutor(AgentExecutor):
         self._model = model
         self._conversations = conversations
         self._registry = registry
-        # One message at a time per conversation, so turns stay in order.
-        self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # One message at a time per conversation, so turns stay in order: each
+        # lock with the messages holding or awaiting it, dropped when none is.
+        self._locks: dict[str, tuple[asyncio.Lock, int]] = {}
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         message = context.message
@@ -54,10 +56,14 @@ class ClaudeAgentExecutor(AgentExecutor):
             await updater.reject(self._say(updater, "Send the request as text."))
             return
 
+        caller = context.call_context.user
         token = _bearer(context)
-        owner = hashlib.sha256(token.encode()).hexdigest() if token else ""
+        if not caller.is_authenticated or not caller.user_name or token is None:
+            await updater.reject(self._say(updater, "Send a registry token."))
+            return
+        owner = caller.user_name
 
-        async with self._locks[task.context_id]:
+        async with self._turn(task.context_id):
             if not self._conversations.belongs_to(task.context_id, owner):
                 await updater.reject(
                     self._say(updater, "This conversation belongs to another caller.")
@@ -69,7 +75,7 @@ class ClaudeAgentExecutor(AgentExecutor):
                 )
                 return
             toolbox: Toolbox | None = None
-            if token and self._registry is not None:
+            if self._registry is not None:
                 try:
                     toolbox = await self._registry.open(token)
                 except RegistryRefused:
@@ -116,6 +122,20 @@ class ClaudeAgentExecutor(AgentExecutor):
         if task is None:
             return
         await TaskUpdater(event_queue, task.id, task.context_id).cancel()
+
+    @asynccontextmanager
+    async def _turn(self, context_id: str) -> AsyncIterator[None]:
+        lock, waiting = self._locks.get(context_id, (asyncio.Lock(), 0))
+        self._locks[context_id] = (lock, waiting + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            lock, waiting = self._locks[context_id]
+            if waiting == 1:
+                del self._locks[context_id]
+            else:
+                self._locks[context_id] = (lock, waiting - 1)
 
     @staticmethod
     def _say(updater: TaskUpdater, text: str) -> Message:

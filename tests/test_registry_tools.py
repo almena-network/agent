@@ -17,8 +17,9 @@ from httpx import AsyncClient
 
 from almena_agent.config import get_settings
 from almena_agent.llm import Claude
+from almena_agent.main import create_app
 from almena_agent.registry import McpRegistry, RegistryRefused
-from tests.conftest import FakeModel, FakeRegistry, FakeToolbox
+from tests.conftest import FakeAccounts, FakeModel, FakeRegistry, FakeToolbox, connect
 from tests.test_a2a import user_message
 
 GOOD = {"Authorization": "Bearer good"}
@@ -45,19 +46,19 @@ async def test_a_token_brings_the_registry_tools(
     assert toolbox.token == "good"
 
 
-async def test_without_a_token_the_agent_only_converses(
-    client: AsyncClient, model: FakeModel, registry: FakeRegistry
+async def test_without_the_mcp_endpoint_the_agent_only_converses(
+    model: FakeModel, accounts: FakeAccounts
 ) -> None:
-    task = await _send(client, user_message("Hi"))
+    async with connect(create_app(model, None, accounts)) as client:
+        task = await _send(client, user_message("Hi"))
     assert task["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert registry.opened == []
     assert model.toolboxes == [None]
 
 
-async def test_a_token_the_registry_refuses_rejects_the_task(
+async def test_a_token_the_registry_mcp_refuses_rejects_the_task(
     client: AsyncClient, model: FakeModel
 ) -> None:
-    task = await _send(client, user_message("Hi"), {"Authorization": "Bearer stolen"})
+    task = await _send(client, user_message("Hi"), {"Authorization": "Bearer revoked"})
     assert task["status"]["state"] == "TASK_STATE_REJECTED"
     assert model.calls == []
 
@@ -76,8 +77,10 @@ async def test_a_context_stays_with_whoever_started_it(
 ) -> None:
     first = await _send(client, user_message("My tenants?"), GOOD)
     context = first["contextId"]
-    anonymous = await _send(client, user_message("And theirs?", context))
-    assert anonymous["status"]["state"] == "TASK_STATE_REJECTED"
+    theirs = await _send(
+        client, user_message("And theirs?", context), {"Authorization": "Bearer other"}
+    )
+    assert theirs["status"]["state"] == "TASK_STATE_REJECTED"
     again = await _send(client, user_message("Thanks", context), GOOD)
     assert again["status"]["state"] == "TASK_STATE_COMPLETED"
     assert len(model.calls) == 2

@@ -3,7 +3,8 @@
 The agent is an MCP client of the registry API (``AGENT_REGISTRY_MCP_URL``):
 for each message it opens a toolbox with the caller's own registry token, so
 Claude acts as that caller's account and can do only what that account may do.
-Without a token there is no toolbox, and the agent only converses.
+Every call carries a token (``a2a/auth.py`` turns away the rest); with
+``AGENT_REGISTRY_MCP_URL`` empty there is no toolbox, and the agent only converses.
 
 The endpoint is stateless and answers each JSON-RPC message as JSON, so every
 message is one plain POST; ``initialize`` is still sent first, as MCP asks.

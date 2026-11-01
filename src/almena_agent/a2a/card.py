@@ -10,15 +10,17 @@ from a2a.types import (
     AgentProvider,
     AgentSkill,
     HTTPAuthSecurityScheme,
+    SecurityRequirement,
     SecurityScheme,
+    StringList,
 )
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
 
 from almena_agent import __version__
 from almena_agent.config import Settings
 
-# The caller's Almena registry token, optional: with it the agent operates the
-# registry as the token's account; without it, it only converses.
+# The caller's Almena registry token, required on every call but the card's:
+# the agent answers that account, and operates the registry as it.
 REGISTRY_SCHEME = "almenaRegistry"
 
 # Where the two A2A bindings are mounted, under the public origin.
@@ -55,12 +57,13 @@ def build_agent_card(settings: Settings) -> AgentCard:
                     scheme="Bearer",
                     bearer_format="Almena registry API token (almena_…)",
                     description=(
-                        "Optional. The agent operates the Almena registry as this "
-                        "token's account; without it, it only answers questions."
+                        "Required. An API token of the Almena registry: the agent "
+                        "answers its account and operates the registry as it."
                     ),
                 )
             )
         },
+        security_requirements=[SecurityRequirement(schemes={REGISTRY_SCHEME: StringList()})],
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain", "text/markdown"],
         skills=[

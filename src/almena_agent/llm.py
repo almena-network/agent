@@ -5,6 +5,7 @@ its place (``get_model`` is the dependency to override).
 """
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -20,6 +21,7 @@ from anthropic.types.beta import (
 )
 
 from almena_agent.config import Settings, get_settings
+from almena_agent.metrics import METRICS
 from almena_agent.prompts import SYSTEM_PROMPT
 from almena_agent.registry import Toolbox
 
@@ -114,6 +116,30 @@ class Claude:
         return Reply(turns=turns, text="\n\n".join(texts), refused=False)
 
     async def _stream(
+        self,
+        messages: list[BetaMessageParam],
+        on_text: OnText,
+        toolbox: Toolbox | None,
+        *,
+        separate: bool,
+        last: bool,
+    ) -> BetaMessage:
+        started = time.perf_counter()
+        try:
+            message = await self._request(messages, on_text, toolbox, separate=separate, last=last)
+        except AnthropicError:
+            METRICS.claude_call("error", time.perf_counter() - started)
+            raise
+        refused = message.stop_reason == "refusal"
+        METRICS.claude_call("refused" if refused else "ok", time.perf_counter() - started)
+        usage = message.usage
+        METRICS.claude_used("input", usage.input_tokens)
+        METRICS.claude_used("output", usage.output_tokens)
+        METRICS.claude_used("cache_read", usage.cache_read_input_tokens)
+        METRICS.claude_used("cache_creation", usage.cache_creation_input_tokens)
+        return message
+
+    async def _request(
         self,
         messages: list[BetaMessageParam],
         on_text: OnText,
